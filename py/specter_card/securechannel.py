@@ -5,9 +5,14 @@ Supports *es* (host-ephemeral / card-static) and *ee* (both ephemeral) modes.
 """
 import hashlib, hmac, os
 from io import BytesIO
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    derive_private_key, EllipticCurvePublicKey, SECP256K1, ECDH, ECDSA,
+)
+from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-from . import secp256k1
+from cryptography.exceptions import InvalidSignature
 
 _encode = lambda d: bytes([len(d)]) + d
 
@@ -20,6 +25,32 @@ _INS_OPEN_SE         = 0xB4  # es mode
 _INS_OPEN_EE         = 0xB5  # ee mode
 _INS_SECURE_MESSAGE  = 0xB6
 _INS_CLOSE           = 0xB7
+
+_CURVE = SECP256K1()
+
+
+def _parse_pubkey(data: bytes) -> EllipticCurvePublicKey:
+    """Parse a 33- or 65-byte serialized secp256k1 public key."""
+    return EllipticCurvePublicKey.from_encoded_point(_CURVE, data)
+
+
+def _serialize_pubkey(pub: EllipticCurvePublicKey, compressed: bool = False) -> bytes:
+    fmt = PublicFormat.CompressedPoint if compressed else PublicFormat.UncompressedPoint
+    return pub.public_bytes(Encoding.X962, fmt)
+
+
+def _ecdh(private_key, peer_pubkey: EllipticCurvePublicKey) -> bytes:
+    """Return the 32-byte x-coordinate of the ECDH shared point."""
+    return private_key.exchange(ECDH(), peer_pubkey)
+
+
+def _verify_sig(pub: EllipticCurvePublicKey, sig_der: bytes, msg_hash: bytes) -> bool:
+    """Verify a DER-encoded ECDSA signature over a pre-computed SHA-256 hash."""
+    try:
+        pub.verify(sig_der, msg_hash, ECDSA(Prehashed(SHA256())))
+        return True
+    except InvalidSignature:
+        return False
 
 
 class SecureError(Exception):
@@ -58,10 +89,10 @@ class SecureChannel:
     # ------------------------------------------------------------------
     def _get_card_pubkey(self):
         sec = self.card.request(bytes([_CLA, _INS_GET_PUBKEY, 0x00, 0x00]))
-        self._card_pubkey = secp256k1.ec_pubkey_parse(sec)
+        self._card_pubkey = _parse_pubkey(sec)
         return self._card_pubkey
 
-    def _derive_keys(self, shared_secret: bytes) -> bytes:
+    def _derive_keys(self, shared_secret: bytes):
         self._host_aes_key = hashlib.sha256(b"host_aes" + shared_secret).digest()
         self._card_aes_key = hashlib.sha256(b"card_aes" + shared_secret).digest()
         self._host_mac_key = hashlib.sha256(b"host_mac" + shared_secret).digest()
@@ -78,10 +109,8 @@ class SecureChannel:
         if self._card_pubkey is None:
             self._get_card_pubkey()
 
-        secret = os.urandom(32)
-        host_prv = secret
-        host_pub = secp256k1.ec_pubkey_create(secret)
-        host_pub_bytes = secp256k1.ec_pubkey_serialize(host_pub, secp256k1.EC_UNCOMPRESSED)
+        host_prv = derive_private_key(int.from_bytes(os.urandom(32), "big"), _CURVE)
+        host_pub_bytes = _serialize_pubkey(host_prv.public_key())
 
         if self.mode == "ee":
             res = self.card.request(
@@ -89,9 +118,8 @@ class SecureChannel:
             )
             s = BytesIO(res)
             card_pub_bytes = s.read(65)
-            card_pub = secp256k1.ec_pubkey_parse(card_pub_bytes)
-            secp256k1.ec_pubkey_tweak_mul(card_pub, secret)
-            shared_x = secp256k1.ec_pubkey_serialize(card_pub)[1:33]
+            card_ephemeral_pub = _parse_pubkey(card_pub_bytes)
+            shared_x = _ecdh(host_prv, card_ephemeral_pub)
             shared_secret = hashlib.sha256(shared_x).digest()
             self._derive_keys(shared_secret)
             recv_hmac = s.read(HMAC_LEN)
@@ -101,9 +129,7 @@ class SecureChannel:
             # verify card signature
             data_signed = card_pub_bytes + recv_hmac
             raw_sig = s.read()
-            sig = secp256k1.ecdsa_signature_parse_der(raw_sig)
-            sig = secp256k1.ecdsa_signature_normalize(sig)
-            if not secp256k1.ecdsa_verify(sig, hashlib.sha256(data_signed).digest(), self._card_pubkey):
+            if not _verify_sig(self._card_pubkey, raw_sig, hashlib.sha256(data_signed).digest()):
                 raise RuntimeError("Invalid card signature during EE channel open")
         else:
             # es mode (default)
@@ -113,21 +139,15 @@ class SecureChannel:
             s = BytesIO(res)
             nonce_card = s.read(32)
             recv_hmac = s.read(HMAC_LEN)
-            # derive shared secret using card static pubkey
-            pub_copy = secp256k1.ec_pubkey_parse(
-                secp256k1.ec_pubkey_serialize(self._card_pubkey, secp256k1.EC_UNCOMPRESSED)
-            )
-            secp256k1.ec_pubkey_tweak_mul(pub_copy, secret)
-            shared_x = secp256k1.ec_pubkey_serialize(pub_copy)[1:33]
+            shared_x = _ecdh(host_prv, self._card_pubkey)
             secret_with_nonce = hashlib.sha256(shared_x + nonce_card).digest()
             self._derive_keys(secret_with_nonce)
             h = hmac.new(self._card_mac_key, nonce_card, digestmod="sha256")
             if h.digest()[:HMAC_LEN] != recv_hmac:
                 raise RuntimeError("HMAC mismatch during ES channel open")
             data_signed = nonce_card + recv_hmac
-            sig = secp256k1.ecdsa_signature_parse_der(s.read())
-            sig = secp256k1.ecdsa_signature_normalize(sig)
-            if not secp256k1.ecdsa_verify(sig, hashlib.sha256(data_signed).digest(), self._card_pubkey):
+            raw_sig = s.read()
+            if not _verify_sig(self._card_pubkey, raw_sig, hashlib.sha256(data_signed).digest()):
                 raise RuntimeError("Invalid card signature during ES channel open")
 
         self.iv = 0
@@ -146,7 +166,7 @@ class SecureChannel:
         if len(d) % 16:
             d += b"\x00" * (16 - len(d) % 16)
         iv = self.iv.to_bytes(16, "big")
-        cipher = Cipher(algorithms.AES(self._host_aes_key), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(self._host_aes_key), modes.CBC(iv))
         enc = cipher.encryptor()
         ct = enc.update(d) + enc.finalize()
         h = hmac.new(self._host_mac_key, iv + ct, digestmod="sha256")
@@ -159,7 +179,7 @@ class SecureChannel:
         h = hmac.new(self._card_mac_key, iv + ct, digestmod="sha256")
         if h.digest()[:HMAC_LEN] != recv_hmac:
             raise RuntimeError("HMAC mismatch in card response")
-        cipher = Cipher(algorithms.AES(self._card_aes_key), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(self._card_aes_key), modes.CBC(iv))
         dec = cipher.decryptor()
         plain = dec.update(ct) + dec.finalize()
         # strip M2 padding
