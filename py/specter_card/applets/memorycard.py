@@ -77,6 +77,8 @@ class MemoryCardApplet(SecureApplet):
         """
         raw = self.get_data(sc)
         return parse_sdiy_blob(raw, device_secret=device_secret)
+
+    def store_data(self, sc: SecureChannel, data: bytes) -> bytes:
         """
         Persist *data* on the card (up to 220 bytes) and return the stored value.
 

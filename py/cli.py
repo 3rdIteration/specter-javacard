@@ -40,6 +40,12 @@ Examples
     # Store secret data in MemoryCard after unlocking with PIN
     specter-card --pin mysecret memorycard store --hex deadbeef
 
+    # Decrypt a Specter-DIY blob (unencrypted)
+    specter-card --pin mysecret memorycard decode-diy
+
+    # Decrypt a Specter-DIY blob (encrypted – supply the device's MCU secret)
+    specter-card --pin mysecret memorycard decode-diy --device-secret <32-byte-hex>
+
     # Import a BIP-32 seed and sign a hash
     specter-card --pin mysecret blindoracle set-seed --hex ae361e...
     specter-card --pin mysecret blindoracle sign --hash 3132...20 --key root
@@ -58,7 +64,7 @@ from specter_card.connection import Card, Simulator, ISOException
 from specter_card.securechannel import SecureChannel, SecureError
 from specter_card.applets.teapot import TeapotApplet
 from specter_card.applets.secure import SecureApplet
-from specter_card.applets.memorycard import MemoryCardApplet
+from specter_card.applets.memorycard import MemoryCardApplet, DecryptionError
 from specter_card.applets.blindoracle import BlindOracleApplet
 from specter_card.applets.singleusekey import SingleUseKeyApplet
 
@@ -274,6 +280,31 @@ def cmd_memorycard_store(args, conn):
         _print_bytes(stored, "stored (hex)")
 
 
+def cmd_memorycard_decode_diy(args, conn):
+    device_secret = None
+    if args.device_secret:
+        try:
+            device_secret = bytes.fromhex(args.device_secret)
+        except ValueError:
+            print("[error] --device-secret must be a hex string", file=sys.stderr)
+            sys.exit(1)
+    app = MemoryCardApplet(conn)
+    sc  = _open_sc_and_unlock(conn, args.pin.encode() if args.pin else None)
+    try:
+        result = app.decode_diy_data(sc, device_secret=device_secret)
+    except DecryptionError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        sc.close()
+    print(f"encrypted: {result['encrypted']}")
+    print(f"entropy:   {result['entropy'].hex()}")
+    if result["mnemonic"] is not None:
+        print(f"mnemonic:  {result['mnemonic']}")
+    else:
+        print("mnemonic:  (install 'embit' to decode entropy to BIP-39 words)")
+
+
 # ---------------------------------------------------------------------------
 # BlindOracle commands
 # ---------------------------------------------------------------------------
@@ -480,7 +511,21 @@ def build_parser() -> argparse.ArgumentParser:
     mc_store.add_argument("data", help="Data to store (string or hex).")
     mc_store.add_argument("--hex", action="store_true", help="Interpret DATA as hex.")
 
-    # ------------------------------------------------------------------ blindoracle
+    mc_diy = mc_sub.add_parser(
+        "decode-diy",
+        help=(
+            "Decrypt and decode a Specter-DIY blob stored on the card. "
+            "For encrypted blobs, supply the 32-byte device secret via "
+            "--device-secret (hex). Unencrypted blobs need no secret."
+        ),
+    )
+    mc_diy.add_argument(
+        "--device-secret", default=None, metavar="HEX",
+        help=(
+            "32-byte internal secret from the Specter-DIY device's MCU flash "
+            "(hex string). Required for encrypted blobs."
+        ),
+    )
     bo = subparsers.add_parser(
         "blindoracle",
         help="BIP-32 HD key storage, derivation, and signing."
@@ -575,6 +620,7 @@ COMMANDS = {
     ("secure",       "secure-random"):  cmd_secure_secure_random,
     ("memorycard",   "get"):            cmd_memorycard_get,
     ("memorycard",   "store"):          cmd_memorycard_store,
+    ("memorycard",   "decode-diy"):     cmd_memorycard_decode_diy,
     ("blindoracle",  "set-seed"):       cmd_blindoracle_set_seed,
     ("blindoracle",  "set-xprv"):       cmd_blindoracle_set_xprv,
     ("blindoracle",  "gen-key"):        cmd_blindoracle_gen_key,
