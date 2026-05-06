@@ -526,6 +526,8 @@ def build_parser() -> argparse.ArgumentParser:
             "(hex string). Required for encrypted blobs."
         ),
     )
+
+    # ------------------------------------------------------------------ blindoracle
     bo = subparsers.add_parser(
         "blindoracle",
         help="BIP-32 HD key storage, derivation, and signing."
