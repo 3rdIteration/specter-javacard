@@ -5,6 +5,7 @@ Extends SecureApplet with get_data / store_data commands, both PIN-protected.
 """
 from .secure import SecureApplet
 from ..securechannel import SecureChannel
+from ..diy_crypt import parse_sdiy_blob, DecryptionError  # noqa: F401 – re-exported
 
 AID      = "B00B5111CB01"
 APPLET   = "toys.MemoryCardApplet"
@@ -43,7 +44,39 @@ class MemoryCardApplet(SecureApplet):
         """
         return sc.request(bytes([_CMD_MEMORY, _SUBCMD_GET]))
 
-    def store_data(self, sc: SecureChannel, data: bytes) -> bytes:
+    def decode_diy_data(self, sc: SecureChannel, device_secret: bytes = None) -> dict:
+        """
+        Retrieve and decrypt a Specter-DIY blob from the card.
+
+        Reads the raw bytes via :meth:`get_data` and passes them to
+        :func:`~specter_card.diy_crypt.parse_sdiy_blob`.
+
+        Parameters
+        ----------
+        sc : SecureChannel
+            An open, unlocked secure channel.
+        device_secret : bytes, optional
+            32-byte internal secret from the Specter-DIY device's MCU flash.
+            Required when the stored blob is encrypted; not needed for
+            plain-text blobs.
+
+        Returns
+        -------
+        dict
+            Keys:
+
+            * ``"entropy"``   – :class:`bytes`: raw BIP-39 entropy
+            * ``"encrypted"`` – :class:`bool`: whether the blob was encrypted
+            * ``"mnemonic"``  – :class:`str` or ``None``: BIP-39 mnemonic
+              (populated only when the ``embit`` package is available)
+
+        Raises
+        ------
+        DecryptionError
+            If decryption fails or the blob is not a valid Specter-DIY blob.
+        """
+        raw = self.get_data(sc)
+        return parse_sdiy_blob(raw, device_secret=device_secret)
         """
         Persist *data* on the card (up to 220 bytes) and return the stored value.
 
