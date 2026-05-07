@@ -12,6 +12,29 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+## Run directly from source (dev / testing)
+
+You can skip the package install step and run the CLI straight from the checked-out
+source tree:
+
+```bash
+cd py/
+pip install -r requirements.txt
+python3 cli.py --help
+```
+
+Example commands:
+
+```bash
+cd py/
+python3 cli.py teapot get
+python3 cli.py --mode simulator memorycard get
+python3 cli.py --pin mysecret memorycard decode-diy
+```
+
+If you do install the package, the equivalent commands use the `specter-card`
+entry point instead of `python3 cli.py`.
+
 > **libsecp256k1** – the secure-channel and BlindOracle features require
 > `libsecp256k1`.  The pre-built binaries shipped in
 > `tests/tests/util/prebuilt/` are used automatically as a fallback if the
