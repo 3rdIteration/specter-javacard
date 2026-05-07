@@ -231,7 +231,14 @@ def _open_sc_and_unlock(conn, pin_arg, mode=AUTO_SECURE_CHANNEL_MODE):
         try:
             sc.request(bytes([0x03, 0x01]) + pin)   # unlock
         except SecureError as e:
-            print(f"[error] Failed to unlock with provided PIN: {e}", file=sys.stderr)
+            if e.code == "0505":
+                print(
+                    "[error] Failed to unlock: PIN is not set on this card. "
+                    "Use 'secure set-pin --pin <value>' to enable it.",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"[error] Failed to unlock with provided PIN: {e}", file=sys.stderr)
             sys.exit(1)
     return sc
 
@@ -403,6 +410,9 @@ def cmd_memorycard_get(args, conn):
     sc = _open_sc_and_unlock(conn, args.pin.encode() if args.pin else None, mode=args.secure_channel_mode)
     data = app.get_data(sc)
     sc.close()
+    if not data:
+        print("[info] No data stored on card.")
+        return
     try:
         print(data.decode())
     except UnicodeDecodeError:
@@ -699,7 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mc_sub.add_parser("get", help="Retrieve the secret stored on the card.")
 
-    mc_store = mc_sub.add_parser("store", help="Write a secret to the card (up to 220 bytes).")
+    mc_store = mc_sub.add_parser("store", aliases=["set"], help="Write a secret to the card (up to 220 bytes).")
     mc_store.add_argument("data", help="Data to store (string or hex).")
     mc_store.add_argument("--hex", action="store_true", help="Interpret DATA as hex.")
 
@@ -815,6 +825,7 @@ COMMANDS = {
     ("secure",       "probe-modes"):    cmd_secure_probe_modes,
     ("memorycard",   "get"):            cmd_memorycard_get,
     ("memorycard",   "store"):          cmd_memorycard_store,
+    ("memorycard",   "set"):            cmd_memorycard_store,
     ("memorycard",   "decode-diy"):     cmd_memorycard_decode_diy,
     ("blindoracle",  "set-seed"):       cmd_blindoracle_set_seed,
     ("blindoracle",  "set-xprv"):       cmd_blindoracle_set_xprv,
