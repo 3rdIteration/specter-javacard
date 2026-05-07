@@ -95,6 +95,9 @@ specter-card [--mode {card,simulator}] [--aid AID] [--pin PIN] <applet> <command
 | `--pin <string>` | PIN to unlock the card before executing the command. |
 | `--port <n>` | Simulator TCP port (default 6666). |
 
+Without `--aid` in `--mode card`, the CLI now tries all compatible applet AIDs for the selected command
+(for example, `secure` commands can run against `secure`, `memorycard`, `blindoracle`, or `singleusekey`).
+
 ### `teapot`
 
 | Command | Description |
@@ -106,6 +109,14 @@ specter-card [--mode {card,simulator}] [--aid AID] [--pin PIN] <applet> <command
 specter-card teapot get
 specter-card teapot store "hello world"
 specter-card teapot store --hex deadbeef
+```
+
+### `discover`
+
+Probe the card for known Specter applet AIDs:
+
+```bash
+specter-card discover
 ```
 
 ### `secure`
@@ -125,6 +136,7 @@ specter-card teapot store --hex deadbeef
 
 ```bash
 specter-card secure get-random
+specter-card secure get-random   # also works if only a derived secure applet is installed
 specter-card secure get-pubkey
 specter-card secure set-pin --pin mysecret
 specter-card --pin mysecret secure pin-status

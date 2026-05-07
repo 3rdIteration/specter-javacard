@@ -13,6 +13,7 @@ Usage
 
 Applets
 -------
+``discover``      Probe for installed Specter applets by trying known AIDs.
 ``teapot``        Simple plaintext key/value store.
 ``secure``        Base SecureApplet – random, pubkey, PIN management.
 ``memorycard``    Secure byte-string storage (PIN-protected).
@@ -76,6 +77,14 @@ APPLET_META = {
     "singleusekey": (SingleUseKeyApplet.AID, SingleUseKeyApplet.APPLET, SingleUseKeyApplet.CLASSDIR),
 }
 
+APPLET_CLASSES = {
+    "teapot":       TeapotApplet,
+    "secure":       SecureApplet,
+    "memorycard":   MemoryCardApplet,
+    "blindoracle":  BlindOracleApplet,
+    "singleusekey": SingleUseKeyApplet,
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -98,16 +107,55 @@ def _print_bytes(data: bytes, label: str = None):
         print(data.hex())
 
 
-def _make_connection(args, applet_name: str):
-    """Build and connect the appropriate connection object."""
+def _connect_once(args, applet_name: str, aid: str = None):
+    """Connect once to a specific applet entry (or explicit AID)."""
     meta = APPLET_META[applet_name]
-    aid = args.aid if args.aid else meta[0]
+    aid = aid if aid else meta[0]
     if args.mode == "simulator":
         conn = Simulator(aid, meta[1], meta[2], port=getattr(args, "port", 6666))
     else:
         conn = Card(aid)
     conn.connect()
     return conn
+
+
+def _compatible_applets(applet_name: str):
+    """Return applet names that can serve commands for *applet_name*."""
+    base_cls = APPLET_CLASSES[applet_name]
+    return [name for name, cls in APPLET_CLASSES.items() if issubclass(cls, base_cls)]
+
+
+def _make_connection(args, applet_name: str):
+    """
+    Build and connect the appropriate connection object.
+
+    On card mode without --aid override, tries all compatible applet AIDs in order.
+    """
+    if args.aid:
+        return _connect_once(args, applet_name, aid=args.aid), applet_name
+    if args.mode == "simulator":
+        return _connect_once(args, applet_name), applet_name
+
+    last_iso = None
+    candidates = _compatible_applets(applet_name)
+    for candidate in candidates:
+        try:
+            conn = _connect_once(args, candidate)
+            if candidate != applet_name:
+                print(
+                    f"[info] {applet_name} command matched installed '{candidate}' applet "
+                    f"(AID {APPLET_META[candidate][0]})."
+                )
+            return conn, candidate
+        except ISOException as e:
+            if e.code == "6a82":
+                last_iso = e
+                continue
+            raise
+
+    if last_iso is not None:
+        raise last_iso
+    raise RuntimeError(f"Could not connect to any compatible applet for '{applet_name}'")
 
 
 def _open_sc_and_unlock(conn, pin_arg):
@@ -424,6 +472,37 @@ def cmd_singleusekey_sign(args, conn):
     _print_bytes(sig, "signature (DER)")
 
 
+def cmd_discover(args):
+    if args.mode == "simulator":
+        print("[error] discover is only supported with --mode card", file=sys.stderr)
+        sys.exit(1)
+
+    found = []
+    for name, (aid, _, _) in APPLET_META.items():
+        conn = Card(aid)
+        try:
+            conn.connect()
+            found.append((name, aid))
+        except ISOException as e:
+            if e.code != "6a82":
+                print(f"{name:12} AID {aid} -> error {e.code}")
+        except Exception as e:
+            print(f"{name:12} AID {aid} -> error {e}")
+        finally:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
+
+    if not found:
+        print("No known Specter applets found on card.")
+        return
+
+    print("Detected applets:")
+    for name, aid in found:
+        print(f"- {name:12} {aid}")
+
+
 # ---------------------------------------------------------------------------
 # Argument parser construction
 # ---------------------------------------------------------------------------
@@ -455,6 +534,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="applet", metavar="<applet>")
     subparsers.required = True
+
+    subparsers.add_parser(
+        "discover",
+        help="Probe the card for known Specter applet AIDs.",
+    )
 
     # ------------------------------------------------------------------ teapot
     tp = subparsers.add_parser("teapot", help="Simple plaintext data store (no PIN).")
@@ -642,9 +726,13 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    if args.applet == "discover":
+        cmd_discover(args)
+        return
+
     # Build connection
     try:
-        conn = _make_connection(args, args.applet)
+        conn, _ = _make_connection(args, args.applet)
     except Exception as e:
         print(f"[error] Could not connect: {e}", file=sys.stderr)
         sys.exit(1)
