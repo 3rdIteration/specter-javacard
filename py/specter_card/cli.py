@@ -93,6 +93,47 @@ AUTO_SECURE_CHANNEL_MODE = "auto"
 AUTO_SECURE_CHANNEL_MODE_PRIORITY = ("ee", "es", "ss")
 
 # ---------------------------------------------------------------------------
+# Error code descriptions
+# ---------------------------------------------------------------------------
+
+# SecureError codes are applet-level status words returned inside the
+# encrypted channel (defined in SecureApplet.java).
+_SECURE_ERROR_DESCRIPTIONS = {
+    "0403": "invalid length",
+    "0404": "invalid command",
+    "0405": "invalid sub-command",
+    "0406": "not implemented",
+    "0501": "card locked",
+    "0502": "wrong PIN",
+    "0503": "no PIN attempts remaining",
+    "0504": "already unlocked",
+    "0505": "PIN not set",
+    "0506": "PIN already set",
+}
+
+# ISOException codes are standard ISO 7816-4 status words returned at the
+# transport level (outside the secure channel).
+_ISO_ERROR_DESCRIPTIONS = {
+    "6700": "wrong length",
+    "6900": "command not allowed",
+    "6982": "security status not satisfied",
+    "6984": "reference data not usable",
+    "6985": "conditions of use not satisfied",
+    "6a80": "incorrect data in command field",
+    "6a82": "file or application not found",
+    "6a86": "incorrect parameters P1-P2",
+    "6d00": "instruction not supported",
+    "6e00": "class not supported",
+    "6f00": "unknown error",
+}
+
+
+def _fmt_error(code: str, descriptions: dict) -> str:
+    """Return 'XXXX (description)' if a description is known, else just 'XXXX'."""
+    desc = descriptions.get(code.lower())
+    return f"{code} ({desc})" if desc else code
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -238,7 +279,11 @@ def _open_sc_and_unlock(conn, pin_arg, mode=AUTO_SECURE_CHANNEL_MODE):
                     file=sys.stderr,
                 )
             else:
-                print(f"[error] Failed to unlock with provided PIN: {e}", file=sys.stderr)
+                print(
+                    f"[error] Failed to unlock with provided PIN: "
+                    f"{_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}",
+                    file=sys.stderr,
+                )
             sys.exit(1)
     return sc
 
@@ -870,10 +915,10 @@ def main():
     try:
         handler(args, conn)
     except ISOException as e:
-        print(f"[error] ISO error: {e.code}", file=sys.stderr)
+        print(f"[error] ISO error: {_fmt_error(e.code, _ISO_ERROR_DESCRIPTIONS)}", file=sys.stderr)
         sys.exit(1)
     except SecureError as e:
-        print(f"[error] Secure channel error: {e.code}", file=sys.stderr)
+        print(f"[error] Secure channel error: {_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[error] {e}", file=sys.stderr)
