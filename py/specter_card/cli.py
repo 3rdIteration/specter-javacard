@@ -202,11 +202,6 @@ def _open_sc(conn, mode=AUTO_SECURE_CHANNEL_MODE):
                 if len(data) != 32:
                     raise RuntimeError(f"secure-random returned {len(data)} bytes instead of 32")
             conn.working_secure_channel_mode = candidate
-            if mode == AUTO_SECURE_CHANNEL_MODE and candidate != AUTO_SECURE_CHANNEL_MODE_PRIORITY[0]:
-                print(
-                    f"[info] preferred secure channel mode "
-                    f"'{AUTO_SECURE_CHANNEL_MODE_PRIORITY[0]}' failed; using '{candidate}'."
-                )
             return sc
         except Exception as e:
             failures.append((candidate, e))
