@@ -96,6 +96,30 @@ AUTO_SECURE_CHANNEL_MODE = "auto"
 AUTO_SECURE_CHANNEL_MODE_PRIORITY = ("ee", "es", "ss")
 
 # ---------------------------------------------------------------------------
+# Error code descriptions
+# ---------------------------------------------------------------------------
+
+_SECURE_ERROR_DESCRIPTIONS = {
+    "0403": "invalid length",
+    "0404": "invalid command",
+    "0405": "invalid sub-command",
+    "0406": "not implemented",
+    "0501": "card locked",
+    "0502": "wrong PIN",
+    "0503": "no PIN attempts remaining",
+    "0504": "already unlocked",
+    "0505": "PIN not set",
+    "0506": "PIN already set",
+}
+
+
+def _fmt_error(code: str, descriptions: dict) -> str:
+    """Return 'XXXX (description)' if a description is known, else just 'XXXX'."""
+    desc = descriptions.get(code.lower())
+    return f"{code} ({desc})" if desc else code
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -233,11 +257,28 @@ def _open_sc_and_unlock(conn, pin_arg, mode=AUTO_SECURE_CHANNEL_MODE):
     """Open a secure channel and optionally unlock with a PIN."""
     sc = _open_sc(conn, mode=mode)
     if pin_arg:
+        status = SecureApplet(conn).pin_status(sc)
+        if status.get("status") == "disabled":
+            print("[info] PIN is disabled; ignoring provided --pin and continuing without unlock.")
+            return sc
+        if status.get("status") == "unlocked":
+            return sc
         pin = pin_arg.encode() if isinstance(pin_arg, str) else pin_arg
         try:
             sc.request(bytes([0x03, 0x01]) + pin)   # unlock
         except SecureError as e:
-            print(f"[error] Failed to unlock with provided PIN: {e}", file=sys.stderr)
+            if e.code == "0505":
+                print(
+                    "[error] Failed to unlock: PIN is not set on this card. "
+                    "Use 'secure set-pin --pin <value>' to enable it.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[error] Failed to unlock with provided PIN: "
+                    f"{_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}",
+                    file=sys.stderr,
+                )
             sys.exit(1)
     return sc
 
@@ -868,7 +909,18 @@ def main():
         print(f"[error] ISO error: {e.code}", file=sys.stderr)
         sys.exit(1)
     except SecureError as e:
-        print(f"[error] Secure channel error: {e.code}", file=sys.stderr)
+        if e.code == "0501" and not getattr(args, "pin", None):
+            print(
+                "[error] Card is locked. Provide a PIN with --pin to unlock it.",
+                file=sys.stderr,
+            )
+        elif e.code == "0502":
+            print(
+                "[error] Wrong PIN. Check your PIN value and run 'secure pin-status' to see attempts remaining.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[error] Secure channel error: {_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[error] {e}", file=sys.stderr)
