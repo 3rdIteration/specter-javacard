@@ -135,12 +135,15 @@ specter-card discover
 | `secure secure-random` | Return 32 random bytes over the secure channel. |
 | `secure probe-modes` | Try `ss`, `es`, and `ee` secure-channel modes and run `secure-random` in each. |
 
+Encrypted commands automatically probe a working secure-channel mode and prefer `ee` first. To force a specific mode, use `--secure-channel-mode auto|ee|es|ss`.
+
 ```bash
 specter-card secure get-random
 specter-card secure get-random   # also works if only a derived secure applet is installed
 specter-card secure get-pubkey
 specter-card secure set-pin --pin mysecret
 specter-card --pin mysecret secure pin-status
+specter-card --secure-channel-mode ee secure pin-status
 specter-card --pin mysecret secure lock
 specter-card --pin mysecret secure change-pin --old-pin mysecret --new-pin newpin
 specter-card secure probe-modes

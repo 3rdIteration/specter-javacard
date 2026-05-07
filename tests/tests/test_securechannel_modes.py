@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "py"))
 
+from specter_card.cli import _open_sc
 from specter_card.securechannel import HMAC_LEN, SUPPORTED_SECURE_CHANNEL_MODES, SecureChannel
 
 EXPECTED_SECURE_RANDOM = bytes(reversed(range(32)))
@@ -60,12 +61,23 @@ def _derive_keys(secret):
 
 
 class FakeSecureAppletCard:
-    def __init__(self):
+    def __init__(self, fail_open_modes=None):
         self._curve = SECP256K1()
         self._static_private_key = derive_private_key(7, self._curve)
         self._iv = 0
         self._keys = None
         self._is_open = False
+        self._fail_open_modes = set(fail_open_modes or ())
+        self.connect_calls = 0
+        self.disconnect_calls = 0
+
+    def connect(self):
+        self.connect_calls += 1
+
+    def disconnect(self):
+        self.disconnect_calls += 1
+        self._is_open = False
+        self._keys = None
 
     def request(self, apdu: bytes) -> bytes:
         cla, ins = apdu[0], apdu[1]
@@ -76,10 +88,16 @@ class FakeSecureAppletCard:
         if ins == 0xB2:
             return _serialize_pubkey(self._static_private_key.public_key())
         if ins == 0xB3:
+            if "ss" in self._fail_open_modes:
+                raise RuntimeError("ss mode failed")
             return self._open_ss(payload)
         if ins == 0xB4:
+            if "es" in self._fail_open_modes:
+                raise RuntimeError("es mode failed")
             return self._open_es(payload)
         if ins == 0xB5:
+            if "ee" in self._fail_open_modes:
+                raise RuntimeError("ee mode failed")
             return self._open_ee(payload)
         if ins == 0xB6:
             return self._secure_message(payload)
@@ -171,6 +189,26 @@ class SecureChannelModesTest(unittest.TestCase):
                 sc.open()
                 self.assertEqual(sc.request(b"\x01\x00"), EXPECTED_SECURE_RANDOM)
                 self.assertEqual(sc.is_open, True)
+
+    def test_auto_mode_prefers_ee(self):
+        card = FakeSecureAppletCard()
+        sc = _open_sc(card, mode="auto")
+        self.assertEqual(sc.mode, "ee")
+        self.assertEqual(card.working_secure_channel_mode, "ee")
+        sc.close()
+
+    def test_auto_mode_falls_back_to_es(self):
+        card = FakeSecureAppletCard(fail_open_modes={"ee"})
+        sc = _open_sc(card, mode="auto")
+        self.assertEqual(sc.mode, "es")
+        self.assertEqual(card.working_secure_channel_mode, "es")
+        self.assertGreaterEqual(card.disconnect_calls, 1)
+        sc.close()
+
+    def test_forced_mode_does_not_fallback(self):
+        card = FakeSecureAppletCard(fail_open_modes={"ee"})
+        with self.assertRaises(RuntimeError):
+            _open_sc(card, mode="ee")
 
 
 if __name__ == "__main__":
