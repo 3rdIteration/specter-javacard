@@ -6,6 +6,20 @@ import subprocess
 import time
 import os
 
+
+def _is_card_reset_error(exc):
+    """Return True if *exc* is a recoverable card-reset error.
+
+    On Windows the WinSCard service resets the card when a T=1 transaction
+    takes too long (e.g. during the ECDH+sign step of opening a secure
+    channel).  The error is ``SCARD_W_RESET_CARD`` (0x80100068).  Other
+    PC/SC implementations report similar "card reset" messages.
+    """
+    msg = str(exc)
+    return "0x80100068" in msg or (
+        "reset" in msg.lower() and ("card" in msg.lower() or "scard" in msg.lower())
+    )
+
 SIMULATOR_JAR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../simulator.jar")
 )
@@ -61,9 +75,29 @@ class Card:
             self._conn.disconnect()
             self._conn = None
 
+    def _reconnect_and_reselect(self):
+        """Re-establish the connection after a card reset.
+
+        Calls :meth:`disconnect` then :meth:`connect` so that the full
+        sequence (reader discovery → T1 connect → applet SELECT) is
+        repeated with the same logic used on initial connection.
+        """
+        self.disconnect()
+        self.connect()
+
     def transmit(self, apdu):
-        data, sw1, sw2 = self._conn.transmit(list(apdu))
-        return list(data), sw1, sw2
+        try:
+            data, sw1, sw2 = self._conn.transmit(list(apdu))
+            return list(data), sw1, sw2
+        except Exception as e:
+            if not _is_card_reset_error(e):
+                raise
+            # The card was reset mid-transaction (e.g. Windows
+            # SCARD_W_RESET_CARD 0x80100068 during long card-side crypto).
+            # Re-establish the full session and retry the APDU once.
+            self._reconnect_and_reselect()
+            data, sw1, sw2 = self._conn.transmit(list(apdu))
+            return list(data), sw1, sw2
 
     def request(self, apdu: bytes) -> bytes:
         """Send *apdu* and return response data, raising :exc:`ISOException` on error."""
