@@ -924,7 +924,18 @@ def main():
         print(f"[error] ISO error: {_fmt_error(e.code, _ISO_ERROR_DESCRIPTIONS)}", file=sys.stderr)
         sys.exit(1)
     except SecureError as e:
-        print(f"[error] Secure channel error: {_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}", file=sys.stderr)
+        if e.code == "0501" and not getattr(args, "pin", None):
+            print(
+                "[error] Card is locked. Provide a PIN with --pin to unlock it.",
+                file=sys.stderr,
+            )
+        elif e.code == "0502":
+            print(
+                "[error] Wrong PIN. Check your PIN value and run 'secure pin-status' to see attempts remaining.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[error] Secure channel error: {_fmt_error(e.code, _SECURE_ERROR_DESCRIPTIONS)}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[error] {e}", file=sys.stderr)
