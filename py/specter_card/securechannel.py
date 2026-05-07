@@ -1,7 +1,8 @@
 """
 Secure channel implementation compatible with the JavaCard SecureApplet.
 
-Supports *es* (host-ephemeral / card-static) and *ee* (both ephemeral) modes.
+Supports ``ss`` (both host and card use static keys with nonces),
+``es`` (host-ephemeral / card-static), and ``ee`` (both ephemeral) modes.
 """
 import hashlib, hmac, os
 from io import BytesIO
@@ -14,19 +15,22 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.exceptions import InvalidSignature
 
-_encode = lambda d: bytes([len(d)]) + d
+_encode = lambda data: bytes([len(data)]) + data
 
 HMAC_LEN = 14
+MAX_IV = 2 ** 16
 
 # APDU bytes
 _CLA = 0xB0
 _INS_GET_PUBKEY      = 0xB2
+_INS_OPEN_SS         = 0xB3  # ss mode
 _INS_OPEN_SE         = 0xB4  # es mode
 _INS_OPEN_EE         = 0xB5  # ee mode
 _INS_SECURE_MESSAGE  = 0xB6
 _INS_CLOSE           = 0xB7
 
 _CURVE = SECP256K1()
+SUPPORTED_SECURE_CHANNEL_MODES = ("ss", "es", "ee")
 
 
 def _parse_pubkey(data: bytes) -> EllipticCurvePublicKey:
@@ -70,7 +74,7 @@ class SecureChannel:
         A :class:`~specter_card.connection.Card` or
         :class:`~specter_card.connection.Simulator` instance.
     mode : str
-        ``"es"`` (default) or ``"ee"``.
+        ``"ss"``, ``"es"`` (default), or ``"ee"``.
     """
 
     def __init__(self, card, mode: str = "es"):
@@ -78,6 +82,7 @@ class SecureChannel:
         self.mode = mode
         self.iv = 0
         self.is_open = False
+        self._host_static_private_key = None
         self._card_pubkey = None
         self._card_aes_key = None
         self._host_aes_key = None
@@ -105,14 +110,41 @@ class SecureChannel:
         """Establish the secure channel."""
         if mode is not None:
             self.mode = mode
+        if self.mode not in SUPPORTED_SECURE_CHANNEL_MODES:
+            raise ValueError(
+                f"Unsupported secure channel mode: {self.mode!r}. "
+                f"Expected one of {SUPPORTED_SECURE_CHANNEL_MODES!r}"
+            )
 
         if self._card_pubkey is None:
             self._get_card_pubkey()
 
-        host_prv = derive_private_key(int.from_bytes(os.urandom(32), "big"), _CURVE)
-        host_pub_bytes = _serialize_pubkey(host_prv.public_key())
-
-        if self.mode == "ee":
+        if self.mode == "ss":
+            if self._host_static_private_key is None:
+                self._host_static_private_key = derive_private_key(
+                    int.from_bytes(os.urandom(32), "big"), _CURVE
+                )
+            host_nonce = os.urandom(32)
+            host_pub_bytes = _serialize_pubkey(self._host_static_private_key.public_key())
+            res = self.card.request(
+                bytes([_CLA, _INS_OPEN_SS, 0x00, 0x00]) + _encode(host_pub_bytes + host_nonce)
+            )
+            s = BytesIO(res)
+            nonce_card = s.read(32)
+            recv_hmac = s.read(HMAC_LEN)
+            shared_x = _ecdh(self._host_static_private_key, self._card_pubkey)
+            secret_with_nonces = hashlib.sha256(shared_x + host_nonce + nonce_card).digest()
+            self._derive_keys(secret_with_nonces)
+            h = hmac.new(self._card_mac_key, nonce_card, digestmod="sha256")
+            if h.digest()[:HMAC_LEN] != recv_hmac:
+                raise RuntimeError("HMAC mismatch during SS channel open")
+            data_signed = nonce_card + recv_hmac
+            raw_sig = s.read()
+            if not _verify_sig(self._card_pubkey, raw_sig, hashlib.sha256(data_signed).digest()):
+                raise RuntimeError("Invalid card signature during SS channel open")
+        elif self.mode == "ee":
+            host_prv = derive_private_key(int.from_bytes(os.urandom(32), "big"), _CURVE)
+            host_pub_bytes = _serialize_pubkey(host_prv.public_key())
             res = self.card.request(
                 bytes([_CLA, _INS_OPEN_EE, 0x00, 0x00]) + _encode(host_pub_bytes)
             )
@@ -131,8 +163,10 @@ class SecureChannel:
             raw_sig = s.read()
             if not _verify_sig(self._card_pubkey, raw_sig, hashlib.sha256(data_signed).digest()):
                 raise RuntimeError("Invalid card signature during EE channel open")
-        else:
+        elif self.mode == "es":
             # es mode (default)
+            host_prv = derive_private_key(int.from_bytes(os.urandom(32), "big"), _CURVE)
+            host_pub_bytes = _serialize_pubkey(host_prv.public_key())
             res = self.card.request(
                 bytes([_CLA, _INS_OPEN_SE, 0x00, 0x00]) + _encode(host_pub_bytes)
             )
@@ -182,11 +216,10 @@ class SecureChannel:
         cipher = Cipher(algorithms.AES(self._card_aes_key), modes.CBC(iv))
         dec = cipher.decryptor()
         plain = dec.update(ct) + dec.finalize()
-        # strip M2 padding
-        parts = plain.split(b"\x80")
-        if len(parts) == 1 or parts[-1].replace(b"\x00", b""):
+        pad_start = plain.rfind(b"\x80")
+        if pad_start == -1 or plain[pad_start + 1:].replace(b"\x00", b""):
             raise RuntimeError("Invalid M2 padding in card response")
-        return b"\x80".join(parts[:-1])
+        return plain[:pad_start]
 
     # ------------------------------------------------------------------
     # Send / receive over secure channel
@@ -199,7 +232,7 @@ class SecureChannel:
         Raises :exc:`SecureError` if the card returns a non-9000 status inside
         the encrypted envelope.
         """
-        if self.iv >= 2 ** 16 or not self.is_open:
+        if self.iv >= MAX_IV or not self.is_open:
             self.open()
         ct = self._encrypt(data)
         res = self.card.request(

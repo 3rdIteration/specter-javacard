@@ -133,6 +133,7 @@ specter-card discover
 | `secure change-pin --old-pin <old> --new-pin <new>` | Change the PIN. |
 | `secure echo <data> [--hex]` | Echo data over the secure channel. |
 | `secure secure-random` | Return 32 random bytes over the secure channel. |
+| `secure probe-modes` | Try `ss`, `es`, and `ee` secure-channel modes and run `secure-random` in each. |
 
 ```bash
 specter-card secure get-random
@@ -142,6 +143,7 @@ specter-card secure set-pin --pin mysecret
 specter-card --pin mysecret secure pin-status
 specter-card --pin mysecret secure lock
 specter-card --pin mysecret secure change-pin --old-pin mysecret --new-pin newpin
+specter-card secure probe-modes
 ```
 
 ### `memorycard`

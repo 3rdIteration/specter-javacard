@@ -81,7 +81,7 @@ class SecureApplet:
         Parameters
         ----------
         mode : str
-            ``"es"`` (host-ephemeral/card-static, default) or ``"ee"``.
+            ``"ss"``, ``"es"`` (default), or ``"ee"``.
         """
         sc = SecureChannel(self.conn, mode=mode)
         sc.open()

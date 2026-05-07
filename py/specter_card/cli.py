@@ -15,7 +15,7 @@ Applets
 -------
 ``discover``      Probe for installed Specter applets by trying known AIDs.
 ``teapot``        Simple plaintext key/value store.
-``secure``        Base SecureApplet – random, pubkey, PIN management.
+``secure``        Base SecureApplet – random, pubkey, PIN management, mode probing.
 ``memorycard``    Secure byte-string storage (PIN-protected).
 ``blindoracle``   BIP-32 HD key storage, derivation and signing.
 ``singleusekey``  Single-use key generation and signing.
@@ -59,7 +59,7 @@ import sys
 import os
 
 from .connection import Card, Simulator, ISOException
-from .securechannel import SecureChannel, SecureError
+from .securechannel import SecureChannel, SecureError, SUPPORTED_SECURE_CHANNEL_MODES
 from .applets.teapot import TeapotApplet
 from .applets.secure import SecureApplet
 from .applets.memorycard import MemoryCardApplet, DecryptionError
@@ -163,9 +163,9 @@ def _make_connection(args, applet_name: str):
     raise RuntimeError(f"Could not connect to any compatible applet for '{applet_name}'")
 
 
-def _open_sc_and_unlock(conn, pin_arg):
+def _open_sc_and_unlock(conn, pin_arg, mode="es"):
     """Open a secure channel and optionally unlock with a PIN."""
-    sc = SecureChannel(conn)
+    sc = SecureChannel(conn, mode=mode)
     sc.open()
     if pin_arg:
         pin = pin_arg.encode() if isinstance(pin_arg, str) else pin_arg
@@ -300,6 +300,40 @@ def cmd_secure_secure_random(args, conn):
     sc = _open_sc_and_unlock(conn, args.pin.encode() if args.pin else None)
     _print_bytes(app.secure_random(sc), "random")
     sc.close()
+
+
+def cmd_secure_probe_modes(args, conn):
+    app = SecureApplet(conn)
+    failures = []
+
+    for index, mode in enumerate(SUPPORTED_SECURE_CHANNEL_MODES):
+        sc = None
+        try:
+            if index > 0:
+                # Start each mode probe from a fresh transport/app selection so
+                # one failed or stale secure-channel session does not taint the next.
+                conn.disconnect()
+                conn.connect()
+            sc = app.open_secure_channel(mode=mode)
+            data = app.secure_random(sc)
+            if len(data) != 32:
+                raise RuntimeError(f"secure-random returned {len(data)} bytes instead of 32")
+            print(f"[ok] {mode}: opened secure channel and fetched 32 secure random bytes")
+        except Exception as e:
+            failures.append(mode)
+            print(f"[fail] {mode}: {e}")
+        finally:
+            if sc is not None:
+                try:
+                    sc.close()
+                except Exception:
+                    pass
+
+    succeeded = len(SUPPORTED_SECURE_CHANNEL_MODES) - len(failures)
+    total = len(SUPPORTED_SECURE_CHANNEL_MODES)
+    print(f"Summary: {succeeded}/{total} modes succeeded.")
+    if failures:
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +619,10 @@ def build_parser() -> argparse.ArgumentParser:
     echo_p.add_argument("--hex", action="store_true", help="Interpret DATA as hex.")
 
     sec_sub.add_parser("secure-random", help="Return 32 random bytes over the secure channel.")
+    sec_sub.add_parser(
+        "probe-modes",
+        help="Try ss/es/ee secure-channel modes and run secure-random in each.",
+    )
 
     # ------------------------------------------------------------------ memorycard
     mc = subparsers.add_parser("memorycard", help="Secure byte-string storage (PIN-protected).")
@@ -706,6 +744,7 @@ COMMANDS = {
     ("secure",       "change-pin"):     cmd_secure_change_pin,
     ("secure",       "echo"):           cmd_secure_echo,
     ("secure",       "secure-random"):  cmd_secure_secure_random,
+    ("secure",       "probe-modes"):    cmd_secure_probe_modes,
     ("memorycard",   "get"):            cmd_memorycard_get,
     ("memorycard",   "store"):          cmd_memorycard_store,
     ("memorycard",   "decode-diy"):     cmd_memorycard_decode_diy,
