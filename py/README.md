@@ -15,7 +15,8 @@ pip install -e .
 ## Run directly from source (dev / testing)
 
 You can skip the package install step and run the CLI straight from the checked-out
-source tree:
+source tree.  `cli.py` is a thin launcher that delegates to the single canonical
+implementation in `specter_card/cli.py`:
 
 ```bash
 cd py/
@@ -32,8 +33,9 @@ python3 cli.py --mode simulator memorycard get
 python3 cli.py --pin mysecret memorycard decode-diy
 ```
 
-If you do install the package, the equivalent commands use the `specter-card`
-entry point instead of `python3 cli.py`.
+If you install the package, the equivalent commands use the `specter-card`
+entry point instead of `python3 cli.py` — both call the same `specter_card/cli.py`
+implementation.
 
 > **libsecp256k1** – the secure-channel and BlindOracle features require
 > `libsecp256k1`.  The pre-built binaries shipped in
