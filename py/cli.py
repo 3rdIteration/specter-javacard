@@ -125,7 +125,12 @@ def _connect_once(args, applet_name: str, aid: str = None):
 def _compatible_applets(applet_name: str):
     """Return applet names that can serve commands for *applet_name*."""
     base_cls = APPLET_CLASSES[applet_name]
-    return [name for name, cls in APPLET_CLASSES.items() if issubclass(cls, base_cls)]
+    derived = [
+        name
+        for name, cls in APPLET_CLASSES.items()
+        if name != applet_name and issubclass(cls, base_cls)
+    ]
+    return [applet_name] + derived
 
 
 def _make_connection(args, applet_name: str):
