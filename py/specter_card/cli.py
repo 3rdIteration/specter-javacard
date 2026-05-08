@@ -488,7 +488,7 @@ def cmd_memorycard_get(args, conn):
         return
     _print_bytes(data, "data (hex)")
 
-    device_secret = _parse_device_secret_hex(getattr(args, "device_secret", None))
+    device_secret = _parse_device_secret_hex(args.device_secret)
     try:
         result = parse_sdiy_blob(data, device_secret=device_secret)
     except DecryptionError:
