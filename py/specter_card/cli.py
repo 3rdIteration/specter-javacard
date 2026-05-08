@@ -384,7 +384,7 @@ def cmd_secure_unlock(args, conn):
     sc = _open_sc(conn, mode=args.secure_channel_mode)
     app.unlock(sc, pin)
     sc.close()
-    print("Card unlocked.")
+    print("Card unlocked (this session only — unlock state is cleared when the applet is deselected).")
 
 
 def cmd_secure_lock(args, conn):
