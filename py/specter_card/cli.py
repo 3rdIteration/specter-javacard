@@ -339,7 +339,7 @@ def cmd_secure_pin_status(args, conn):
     sc.close()
     raw_status = status["status"]
     if raw_status == "no_pin":
-        status_line = "no_pin  (PIN is disabled – no unlock required)"
+        status_line = "no_pin  (PIN is disabled — no unlock required)"
     elif raw_status == "unlocked":
         status_line = "unlocked  (PIN is enabled and the card is currently unlocked for this session)"
     elif raw_status == "locked":

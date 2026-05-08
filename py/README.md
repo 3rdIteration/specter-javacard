@@ -139,7 +139,7 @@ specter-card discover
 
 Encrypted commands automatically probe for a working secure-channel mode (trying `ee`, `es`, `ss` in order) and print an `[info]` line showing which mode was selected. To force a specific mode, use `--secure-channel-mode auto|ee|es|ss`.
 
-> **unlock vs unset-pin**
+> **Note — unlock vs unset-pin**
 > `secure unlock --pin <value>` authenticates the card for the *current session only*. The card returns to a locked state after the next power-cycle or an explicit `secure lock` call. The PIN remains set.
 > To *permanently remove* the PIN requirement, use `secure unset-pin --pin <value>`.
 
