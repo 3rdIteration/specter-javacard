@@ -337,7 +337,16 @@ def cmd_secure_pin_status(args, conn):
     sc = _open_sc_and_unlock(conn, None, mode=args.secure_channel_mode)
     status = app.pin_status(sc)
     sc.close()
-    print(f"Status:          {status['status']}")
+    raw_status = status["status"]
+    if raw_status == "no_pin":
+        status_line = "no_pin  (PIN is disabled – no unlock required)"
+    elif raw_status == "unlocked":
+        status_line = "unlocked  (PIN is enabled and the card is currently unlocked for this session)"
+    elif raw_status == "locked":
+        status_line = "locked  (PIN is enabled; use --pin <value> or 'secure unlock' to unlock)"
+    else:
+        status_line = raw_status
+    print(f"Status:          {status_line}")
     print(f"Attempts left:   {status['attempts_left']}")
     print(f"Max attempts:    {status['max_attempts']}")
 
@@ -736,7 +745,15 @@ def build_parser() -> argparse.ArgumentParser:
     up = sec_sub.add_parser("unset-pin", help="Disable PIN. Card must be unlocked first.")
     up.add_argument("--pin", required=True, help="Current PIN to confirm.")
 
-    sec_sub.add_parser("unlock", help="Unlock the card with the global --pin option.")
+    sec_sub.add_parser(
+        "unlock",
+        help=(
+            "Unlock the card for the current session using the global --pin option. "
+            "This does NOT remove the PIN; the card will return to a locked state after "
+            "the next power-cycle or explicit 'lock'. "
+            "To permanently disable the PIN, use 'unset-pin'."
+        ),
+    )
     sec_sub.add_parser("lock",   help="Lock the card.")
 
     cp = sec_sub.add_parser("change-pin", help="Change the PIN code.")

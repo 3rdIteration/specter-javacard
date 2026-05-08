@@ -127,17 +127,21 @@ specter-card discover
 |---------|-------------|
 | `secure get-random` | Print 32 random bytes (hex). |
 | `secure get-pubkey` | Print the card's static public key. |
-| `secure pin-status` | Show PIN status. |
+| `secure pin-status` | Show PIN status (enabled/disabled, locked/unlocked, attempts left). |
 | `secure set-pin --pin <pin>` | Enable and set a PIN. |
-| `secure unset-pin --pin <pin>` | Disable the PIN. |
-| `secure unlock` | Unlock using global `--pin`. |
-| `secure lock` | Lock the card. |
+| `secure unset-pin --pin <pin>` | Permanently disable the PIN. |
+| `secure unlock` | Unlock the card for the current session using global `--pin`. Does **not** remove the PIN. |
+| `secure lock` | Lock the card (requires PIN on next access). |
 | `secure change-pin --old-pin <old> --new-pin <new>` | Change the PIN. |
 | `secure echo <data> [--hex]` | Echo data over the secure channel. |
 | `secure secure-random` | Return 32 random bytes over the secure channel. |
 | `secure probe-modes` | Try `ss`, `es`, and `ee` secure-channel modes and run `secure-random` in each. |
 
 Encrypted commands automatically probe for a working secure-channel mode (trying `ee`, `es`, `ss` in order) and print an `[info]` line showing which mode was selected. To force a specific mode, use `--secure-channel-mode auto|ee|es|ss`.
+
+> **unlock vs unset-pin**
+> `secure unlock --pin <value>` authenticates the card for the *current session only*. The card returns to a locked state after the next power-cycle or an explicit `secure lock` call. The PIN remains set.
+> To *permanently remove* the PIN requirement, use `secure unset-pin --pin <value>`.
 
 ```bash
 specter-card secure get-random
@@ -146,7 +150,9 @@ specter-card secure get-pubkey
 specter-card secure set-pin --pin mysecret
 specter-card --pin mysecret secure pin-status
 specter-card --secure-channel-mode ee secure pin-status
+specter-card --pin mysecret secure unlock   # unlock for this session only; PIN stays set
 specter-card --pin mysecret secure lock
+specter-card --pin mysecret secure unset-pin --pin mysecret   # permanently remove the PIN
 specter-card --pin mysecret secure change-pin --old-pin mysecret --new-pin newpin
 specter-card secure probe-modes
 ```
