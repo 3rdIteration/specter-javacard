@@ -69,6 +69,7 @@ from .applets.secure import SecureApplet
 from .applets.memorycard import MemoryCardApplet, DecryptionError
 from .applets.blindoracle import BlindOracleApplet
 from .applets.singleusekey import SingleUseKeyApplet
+from .diy_crypt import parse_sdiy_blob
 
 # ---------------------------------------------------------------------------
 # Applet metadata (aid, applet class name, classdir)
@@ -153,6 +154,17 @@ def _print_bytes(data: bytes, label: str = None):
         print(f"{label}: {data.hex()}")
     else:
         print(data.hex())
+
+
+def _parse_device_secret_hex(device_secret_hex: str):
+    """Parse optional --device-secret hex into bytes."""
+    if not device_secret_hex:
+        return None
+    try:
+        return bytes.fromhex(device_secret_hex)
+    except ValueError:
+        print("[error] --device-secret must be a hex string", file=sys.stderr)
+        sys.exit(1)
 
 
 def _connect_once(args, applet_name: str, aid: str = None):
@@ -474,10 +486,21 @@ def cmd_memorycard_get(args, conn):
     if not data:
         print("[info] No data stored on card.")
         return
+    _print_bytes(data, "data (hex)")
+
+    device_secret = _parse_device_secret_hex(getattr(args, "device_secret", None))
     try:
-        print(data.decode())
-    except UnicodeDecodeError:
-        _print_bytes(data, "data (hex)")
+        result = parse_sdiy_blob(data, device_secret=device_secret)
+    except DecryptionError:
+        return
+
+    print("specter-diy decode:")
+    print(f"  encrypted: {result['encrypted']}")
+    print(f"  entropy:   {result['entropy'].hex()}")
+    if result["mnemonic"] is not None:
+        print(f"  mnemonic:  {result['mnemonic']}")
+    else:
+        print("  mnemonic:  (install 'embit' to decode entropy to BIP-39 words)")
 
 
 def cmd_memorycard_store(args, conn):
@@ -494,13 +517,7 @@ def cmd_memorycard_store(args, conn):
 
 
 def cmd_memorycard_decode_diy(args, conn):
-    device_secret = None
-    if args.device_secret:
-        try:
-            device_secret = bytes.fromhex(args.device_secret)
-        except ValueError:
-            print("[error] --device-secret must be a hex string", file=sys.stderr)
-            sys.exit(1)
+    device_secret = _parse_device_secret_hex(args.device_secret)
     app = MemoryCardApplet(conn)
     sc  = _open_sc_and_unlock(conn, args.pin.encode() if args.pin else None, mode=args.secure_channel_mode)
     try:
@@ -776,7 +793,17 @@ def build_parser() -> argparse.ArgumentParser:
     mc_sub = mc.add_subparsers(dest="command", metavar="<command>")
     mc_sub.required = True
 
-    mc_sub.add_parser("get", help="Retrieve the secret stored on the card.")
+    mc_get = mc_sub.add_parser(
+        "get",
+        help="Retrieve raw card bytes (hex) and attempt Specter-DIY decode.",
+    )
+    mc_get.add_argument(
+        "--device-secret", default=None, metavar="HEX",
+        help=(
+            "Optional 32-byte internal secret from the Specter-DIY device's MCU flash "
+            "(hex string). Used when decoding encrypted Specter-DIY blobs."
+        ),
+    )
 
     mc_store = mc_sub.add_parser("store", aliases=["set"], help="Write a secret to the card (up to 220 bytes).")
     mc_store.add_argument("data", help="Data to store (string or hex).")

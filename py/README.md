@@ -166,11 +166,12 @@ specter-card secure probe-modes
 
 | Command | Description |
 |---------|-------------|
-| `memorycard get` | Read secret data (PIN-protected). |
+| `memorycard get [--device-secret <hex>]` | Read raw secret data as hex, then attempt Specter-DIY decode. |
 | `memorycard store <data> [--hex]` | Write up to 220 bytes (PIN-protected). |
 
 ```bash
 specter-card --pin mysecret memorycard get
+specter-card --pin mysecret memorycard get --device-secret <32-byte-hex>
 specter-card --pin mysecret memorycard store "my mnemonic phrase"
 specter-card --pin mysecret memorycard store --hex deadbeef
 ```
