@@ -143,6 +143,15 @@ Encrypted commands automatically probe for a working secure-channel mode (trying
 > `secure unlock --pin <value>` authenticates the card for the *current session only*. The card returns to a locked state after the next power-cycle or an explicit `secure lock` call. The PIN remains set.
 > To *permanently remove* the PIN requirement, use `secure unset-pin --pin <value>`.
 
+> **Note — Specter-DIY cross-compatibility**
+> The PIN is transmitted as `sha256(pin_bytes)` so that the wire payload is always 32 bytes.
+> This matches the convention used by the Specter-DIY firmware, ensuring PINs set on a
+> Specter-DIY device work with this tool and vice versa.
+>
+> **Migration**: PINs set with earlier versions of this library (which sent raw UTF-8 bytes)
+> are incompatible with the current version. To migrate, use the old version to call
+> `secure unset-pin` (which removes the PIN), then re-set the PIN with the new version.
+
 ```bash
 specter-card secure get-random
 specter-card secure get-random   # also works if only a derived secure applet is installed

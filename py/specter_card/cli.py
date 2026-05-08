@@ -268,7 +268,8 @@ def _open_sc_and_unlock(conn, pin_arg, mode=AUTO_SECURE_CHANNEL_MODE):
     """Open a secure channel and optionally unlock with a PIN."""
     sc = _open_sc(conn, mode=mode)
     if pin_arg:
-        status = SecureApplet(conn).pin_status(sc)
+        app = SecureApplet(conn)
+        status = app.pin_status(sc)
         if status.get("status") == "disabled":
             print("[info] PIN is disabled; ignoring provided --pin and continuing without unlock.")
             return sc
@@ -276,7 +277,7 @@ def _open_sc_and_unlock(conn, pin_arg, mode=AUTO_SECURE_CHANNEL_MODE):
             return sc
         pin = pin_arg.encode() if isinstance(pin_arg, str) else pin_arg
         try:
-            sc.request(bytes([0x03, 0x01]) + pin)   # unlock
+            app.unlock(sc, pin)
         except SecureError as e:
             if e.code == "0505":
                 print(

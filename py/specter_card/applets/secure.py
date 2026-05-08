@@ -6,6 +6,8 @@ Provides:
   - Secure-channel helpers (open_secure_channel, echo, secure_random)
   - PIN management (status, set, unset, unlock, lock, change)
 """
+import hashlib
+
 from ..connection import ISOException
 from ..securechannel import SecureChannel, SecureError
 
@@ -26,6 +28,12 @@ _SUBCMD_PIN_SET     = 0x04
 _SUBCMD_PIN_UNSET   = 0x05
 
 _encode = lambda d: bytes([len(d)]) + d
+
+# PIN bytes are always SHA-256 hashed before transmission so that:
+#   1. The wire payload is a constant 32 bytes regardless of PIN length.
+#   2. Cross-device compatibility with Specter-DIY is maintained (its firmware
+#      applies the same sha256(pin) transform before every PIN APDU).
+_hash_pin = lambda pin: hashlib.sha256(pin).digest()
 
 AID      = "B00B5111FF01"
 APPLET   = "toys.SecureApplet"
@@ -128,11 +136,11 @@ class SecureApplet:
         Raises :exc:`~specter_card.securechannel.SecureError` with code ``0506``
         if a PIN is already set.
         """
-        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_SET]) + pin)
+        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_SET]) + _hash_pin(pin))
 
     def unset_pin(self, sc: SecureChannel, pin: bytes) -> None:
         """Disable PIN using the current *pin* value."""
-        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_UNSET]) + pin)
+        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_UNSET]) + _hash_pin(pin))
 
     def unlock(self, sc: SecureChannel, pin: bytes) -> None:
         """
@@ -141,7 +149,7 @@ class SecureApplet:
         Raises :exc:`~specter_card.securechannel.SecureError` with code ``0502``
         on wrong PIN or ``0503`` if no attempts remain.
         """
-        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_UNLOCK]) + pin)
+        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_UNLOCK]) + _hash_pin(pin))
 
     def lock(self, sc: SecureChannel) -> None:
         """Lock the card."""
@@ -149,4 +157,4 @@ class SecureApplet:
 
     def change_pin(self, sc: SecureChannel, old_pin: bytes, new_pin: bytes) -> None:
         """Change PIN from *old_pin* to *new_pin*."""
-        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_CHANGE]) + _encode(old_pin) + _encode(new_pin))
+        sc.request(bytes([_CMD_PIN, _SUBCMD_PIN_CHANGE]) + _encode(_hash_pin(old_pin)) + _encode(_hash_pin(new_pin)))
